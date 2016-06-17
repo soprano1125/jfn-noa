@@ -1,0 +1,104 @@
+#!/usr/bin/perl --
+
+use strict;
+use Net::Twitter::Lite::WithAPIv1_1;
+use Config::Simple;
+use File::Spec;
+use LWP::UserAgent;
+use XML::Simple;
+use Encode;
+use Unicode::Japanese;
+use HTML::Entities;
+use Time::Piece;
+use Data::Dumper;
+
+if(@ARGV != 1) {
+	print "not found callsign\n";
+	print "USAGE: " . __FILE__ . " callsign\n";
+	exit -1;
+}
+
+my $station_id = $ARGV[0];
+my $callsign = $station_id;
+
+######################################################################
+my ($ua, $res, $noa);
+my ($cache_dir, $file_name);
+my ($param, $base_path, $setting_path, $setting_file);
+$base_path = File::Spec->rel2abs();
+$base_path =~ s/__FILE__//g;
+$setting_path = "$base_path/config";
+$setting_file = "$setting_path/$station_id.ini";
+
+$param = new Config::Simple("$setting_file")->vars();
+my $max_length	= 140;
+
+$cache_dir = "$base_path/noa_cache";
+$file_name = "$station_id.xml";
+$callsign =~ s/JO(\S{2})-FM/\1/g;
+$callsign = lc($callsign);
+
+if(!-d $cache_dir){
+	mkdir($cache_dir)  or die("can't mkdir $cache_dir");
+}
+
+if(!-f "$cache_dir/$file_name"){
+	open(FH, "> $cache_dir/$file_name") or die("can't open $cache_dir/$file_name");
+	print FH "";
+	close(FH);
+}
+
+$ua = LWP::UserAgent->new();
+$ua->agent("Mozilla/5.0 (radiko-man/0.1)");
+$res = $ua->mirror("http://www.keitai.fm/search/view/$callsign/xml/noamusic.xml", "$cache_dir/$file_name");
+if (!$res->is_success) {
+	exit 1;
+}
+
+$noa = XML::Simple->new(keyattr => [])->XMLin("$cache_dir/$file_name");
+
+my $t = Time::Piece->strptime($noa->{"onair_time"}, '%Y-%m-%dT%H:%M:%S+09:00');
+my $noatime = sprintf("%04d/%02d/%02d %02d:%02d", $t->year, $t->mon, $t->mday, $t->hour, $t->minute);
+
+my $make_value = sprintf("[%s] %s - %s", $noatime, $noa->{"artist_name"}, $noa->{"music_name"});
+$make_value = Unicode::Japanese->new($make_value)->z2h->get;
+$make_value = Unicode::Japanese->new($make_value)->h2zKana->get;
+my $str = encode('utf-8', HTML::Entities::decode($make_value));
+
+# コンシューマ セット
+my %INIT_PARAMS = (
+    consumer_key    => $param->{"CONSUMER_PARAM.CONSUMER_KEY"},
+    consumer_secret => $param->{"CONSUMER_PARAM.CONSUMER_SECRET"},
+    ssl             => 1,
+);
+
+my $t = Net::Twitter::Lite::WithAPIv1_1->new(%INIT_PARAMS);
+
+# トークンをセットする
+$t->access_token($param->{"ACCESS_TOKEN.ACCESS_TOKEN"});
+$t->access_token_secret($param->{"ACCESS_TOKEN.TOKEN_SECRET"});
+
+binmode(STDOUT, ":utf8");
+
+# 投稿
+# delete strings
+my $tweet = decode('utf-8', $str);
+if(length($tweet) > $max_length) {
+    $tweet = substr($tweet, 0, $max_length - 3) . "...";
+}
+
+# post to Twitter
+my ($status, $ret);
+eval {
+	$status = $t->update({ status => $tweet });
+};
+if($@) {
+	print STDERR "Tweet WARNING: $@\n";
+	$ret = 1;
+
+} else {
+	print "Tweet posted.[$tweet]\n";
+	$ret = 0;
+}
+exit $ret;
+
