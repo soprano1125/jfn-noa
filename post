@@ -63,7 +63,7 @@ my $noatime = sprintf("%04d/%02d/%02d %02d:%02d", $t->year, $t->mon, $t->mday, $
 my $make_value = sprintf("[%s] %s - %s", $noatime, $noa->{"artist_name"}, $noa->{"music_name"});
 $make_value = Unicode::Japanese->new($make_value)->z2h->get;
 $make_value = Unicode::Japanese->new($make_value)->h2zKana->get;
-my $str = encode('utf-8', HTML::Entities::decode($make_value));
+my $str = HTML::Entities::decode($make_value);
 
 # コンシューマ セット
 my %INIT_PARAMS = (
